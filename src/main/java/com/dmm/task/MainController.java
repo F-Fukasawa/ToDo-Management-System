@@ -34,45 +34,130 @@ public class MainController {
 			@DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate date) {
 		
 		//1日を取得
-		LocalDate firstDay = getFirstDay(date);
+		LocalDate firstDate = getFirstDay(date);
 		
 		//最終日をを取得
-        LocalDate lastDay = firstDay.with(TemporalAdjusters.lastDayOfMonth());
+        LocalDate lastDate = firstDate.with(TemporalAdjusters.lastDayOfMonth());
 		
 		//前月表示
-        LocalDate beforeMonthFirstDate = getLastMonthDay(firstDay);
+        LocalDate beforeMonthFirstDate = getLastMonthDay(firstDate);
 		model.addAttribute("prev", beforeMonthFirstDate);
 		
 		//翌月表示
-		LocalDate nextMonthFirstDate = getNextMonthDay(lastDay);
+		LocalDate nextMonthFirstDate = getNextMonthDay(lastDate);
 		model.addAttribute("next", nextMonthFirstDate);
 		
 		//年月の表示
-		model.addAttribute("month", firstDay.getYear() + "年" + firstDay.getMonthValue() + "月");
+		model.addAttribute("month", firstDate.getYear() + "年" + firstDate.getMonthValue() + "月");
 		
-		//タスク取得
-		//タスク用のMap
-		LinkedHashMap<LocalDate, List<Tasks>> monthTasks = new LinkedHashMap<LocalDate, List<Tasks>>();
-		
-		//Usersからuser_nameを取得
-		String userRole = usersRepository.findByUser(user.getName());
-		List<Tasks> tasks = new ArrayList<>();
-		//該当ユーザーのタスクを取得（管理者の場合、全ユーザーのタスクを取得）
-		if (("ADMIN").equals(userRole)) {
-			tasks = tasksRepository.findByDateBetweenAll(firstDay, lastDay);
-		} else {
-			tasks = tasksRepository.findByDateBetween(firstDay, lastDay, user.getName());
-		}
+		//タスクを取得
+		List<Tasks> tasks = getTasks(firstDate, lastDate, user.getName());
 		
 		//日付順に並び替え
 		Collections.sort(tasks);
 		
-		//日毎のタスクの集計
+		//タスクをセット
+		LinkedHashMap<LocalDate, List<Tasks>> monthTasks = new LinkedHashMap<LocalDate, List<Tasks>>();
+		monthTasks = getMonthTasks(firstDate, tasks, monthTasks);
+		model.addAttribute("tasks", monthTasks);
+		
+		//カレンダーの表示
+		List<List<LocalDate>> month = new ArrayList<>();
+		month = getBeforeMonthDate(firstDate, month);
+		
+		model.addAttribute("matrix", month);
+		
+		return "/main";
+	}
+	
+	
+	/*
+	 * 1日の取得
+	 * @parm   parmDate URLパラメーターのdate
+	 * @return parmDate その月の1日
+	 */
+	public LocalDate getFirstDay(LocalDate parmDate) {
+		if (parmDate == null) {
+			parmDate = LocalDate.now().withDayOfMonth(1);
+		}
+		return parmDate; 
+	}
+	
+	/*
+	 *前月日取得
+	 * @parm   monthFirstDay 当月の1日
+	 * @return lastMonthDay  前月の1日
+	 */
+	public LocalDate getLastMonthDay(LocalDate monthFirstDay) {
+		LocalDate lastMonthDay = monthFirstDay.minusDays(1);
+		lastMonthDay = lastMonthDay.withDayOfMonth(1);
+		
+		return lastMonthDay; 
+	}
+		
+	/*
+	 *翌月日取得
+	 * @parm   monthLastDay 当月の末日
+	 * @return nextMonthDay 翌月の1日
+	 */
+	public LocalDate getNextMonthDay(LocalDate monthLastDay) {
+		LocalDate nextMonthDay = monthLastDay.plusDays(1);
+		
+		return nextMonthDay; 
+	}
+	
+	/*
+	 * タスクを取得
+	 * @parm   firstDate 当月の1日
+	 * @parm   lastDate  当月の末日
+	 * @parm   name      ログインユーザーのuserName
+	 * @return tasks     検索したタスクのリスト
+	 */
+	public List<Tasks> getTasks(LocalDate firstDate, LocalDate lastDate, String name) {
+		//ログインユーザーのuserNameを取得
+		String userRole = usersRepository.findByUser(name);
+		
+		List<Tasks> tasks = new ArrayList<>();
+		
+		//当週の前月分の最初の日付を取得
+		int beforeMonthDayValue = firstDate.getDayOfWeek().getValue();
+		LocalDate fromDate = firstDate;
+		if (beforeMonthDayValue != 7) {
+			fromDate = getBeforeMonthDate(firstDate, beforeMonthDayValue);
+		}
+		
+		//最終週の翌月分の最後の日付を取得
+		int nextMonthDayValue = Math.abs((lastDate.getDayOfWeek().getValue()) -6);
+		LocalDate toDate = getNextMonthDate(lastDate, nextMonthDayValue);
+		
+		//該当ユーザーのタスクを取得（管理者の場合、全ユーザーのタスクを取得）
+		if (("ADMIN").equals(userRole)) {
+			tasks = tasksRepository.findByDateBetweenAll(fromDate, toDate);
+		} else {
+			tasks = tasksRepository.findByDateBetween(fromDate, toDate, name);
+		}
+		
+		return tasks;
+	}
+	
+	/*
+	 * 日毎のタスクの集計、Mapへのセット
+	 * @parm   firstDate  当月の1日
+	 * @parm   tasks      取得したタスク
+	 * @parm   monthTasks カレンダー表示用のMap
+	 * @return monthTasks カレンダー表示用のMap
+	 */
+	public LinkedHashMap<LocalDate, List<Tasks>> getMonthTasks(LocalDate firstDate, List<Tasks> tasks,
+			LinkedHashMap<LocalDate, List<Tasks>> monthTasks){
+				
+		//日毎のタスク用リスト
 		List<Tasks> dayTasks = new ArrayList<>();
-		LocalDate beforeTaskDate = firstDay;
-		LocalDate nowTaskDate = firstDay;
+		
+		LocalDate beforeTaskDate = firstDate;
+		LocalDate nowTaskDate = firstDate;
 		for (int i = 0; i < tasks.size(); i++) {
 			nowTaskDate = tasks.get(i).getDate();
+			//リストの日付が異なる場合、dayTasksにセット
 			if (i > 0 && !beforeTaskDate.isEqual(nowTaskDate)) {
 				monthTasks.put(beforeTaskDate, dayTasks);
 				dayTasks = new ArrayList<>();
@@ -82,19 +167,24 @@ public class MainController {
 		}
 		monthTasks.put(nowTaskDate, dayTasks);
 		
-		model.addAttribute("tasks", monthTasks);
-		
-		//カレンダーの表示
-		//月のリスト
-		List<List<LocalDate>> month = new ArrayList<>();
-		
+		return monthTasks;
+	}
+	
+	/*
+	 * LocalDateをカレンダー表示用Mapにセット
+	 * @parm   firstDate 当月の1日
+	 * @parm   month     カレンダー用Map
+	 * @return month     カレンダー用Map
+	 */
+	public List<List<LocalDate>> getBeforeMonthDate(LocalDate firstDate, List<List<LocalDate>> month){
+
 		//1週間分のLocalDateを格納するリスト
 		List<LocalDate> week = new ArrayList<>();
 		
 		//当週の前月分を取得
-		int beforeMonthDayValue = firstDay.getDayOfWeek().getValue();
+		int beforeMonthDayValue = firstDate.getDayOfWeek().getValue();
 		if (beforeMonthDayValue != 7) {
-			LocalDate beforeMonthDay = firstDay.minusDays(beforeMonthDayValue);
+			LocalDate beforeMonthDay = getBeforeMonthDate(firstDate, beforeMonthDayValue);
 			//当週の前月分をweekリストに追加
 			for (int i = 0; i < beforeMonthDayValue; i++) {
 				week.add(beforeMonthDay);
@@ -103,8 +193,9 @@ public class MainController {
 		}
 		
 		// 当月の最後の日を取得
-		int lastDayValue = firstDay.lengthOfMonth();
-		LocalDate currentMonthDate = firstDay;
+		int lastDayValue = firstDate.lengthOfMonth();
+		
+		LocalDate currentMonthDate = firstDate;
 		//当月の1週目からweekリストに追加
 		for (int i = 1; i <= lastDayValue; i++) {
 			week.add(currentMonthDate);
@@ -119,52 +210,36 @@ public class MainController {
 		}
 		
 		//最終週の翌月分を取得
-		int afterMonthDate = 7 - (currentMonthDate.getDayOfWeek().getValue());	//この時点でcurrentMonthDateは末日になっている
+		int nextMonthDayValue = 7 - (currentMonthDate.getDayOfWeek().getValue());	//この時点でcurrentMonthDateは翌月の1日になっている
 		//最終週の翌月分をweekリストに追加
-		for (int i = 0; i < afterMonthDate; i++) {
+		for (int i = 0; i < nextMonthDayValue; i++) {
 			week.add(currentMonthDate);
 			currentMonthDate = currentMonthDate.plusDays(1);
 		}		
 		month.add(week);
 		
-		model.addAttribute("matrix", month);
-		
-		return "main";
+		return month;
 	}
 	
 	/*
-	 * 1日の取得
+	 * 当週の前月分の最初の日付を取得
+	 * @parm   firstDate           当月の1日
+	 * @parm   beforeMonthDayValue 当週の前月分の数
+	 * @return beforeMonthDate     当週の前月分の最初の日付
 	 */
-	public LocalDate getFirstDay(LocalDate parmDate) {
-		if (parmDate == null) {
-			parmDate = LocalDate.now().withDayOfMonth(1);
-		}
-		return parmDate; 
+	public LocalDate getBeforeMonthDate(LocalDate firstDate, int beforeMonthDayValue) {
+		LocalDate beforeMonthDate = firstDate.minusDays(beforeMonthDayValue);
+		return beforeMonthDate;
 	}
 	
 	/*
-	 *前月日取得
-	 *
-	 * @parm monthFirstDay 当月の1日
-	 * @return lastMonthDay 前月の1日
+	 * 最終週の翌月分の最後の日付を取得
+	 * @parm   firstDate           当月の1日
+	 * @parm   nextMonthDayValue 当週の翌日分の数
+	 * @return nextMonthDate     当週の翌月分の最後の日付
 	 */
-	public LocalDate getLastMonthDay(LocalDate monthFirstDay) {
-		LocalDate lastMonthDay = monthFirstDay.minusDays(1);
-		lastMonthDay = lastMonthDay.withDayOfMonth(1);
-		
-		return lastMonthDay; 
-	}
-	
-	
-	/*
-	 *翌月日取得
-	 *
-	 * @parm monthLastDay 当月の最終日
-	 * @return nextMonthDay 翌月の1日
-	 */
-	public LocalDate getNextMonthDay(LocalDate monthLastDay) {
-		LocalDate nextMonthDay = monthLastDay.plusDays(1);
-		
-		return nextMonthDay; 
+	public LocalDate getNextMonthDate(LocalDate lastDate, int nextMonthDayValue) {
+		LocalDate nextMonthDate = lastDate.plusDays(nextMonthDayValue);
+		return nextMonthDate;
 	}
 }
